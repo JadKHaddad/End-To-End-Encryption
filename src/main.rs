@@ -19,6 +19,9 @@ fn ws(
     ws: WebSocket,
     clients: Data<&Arc<RwLock<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>>,
 ) -> impl IntoResponse {
+    //This is done the easy way. Don't do this in production.
+    //Use some channels and options instead of locking the whole hashmap.
+    
     let clients = clients.clone();
     let clients_recv = clients.clone();
     let from_recv = from.clone();
