@@ -23,6 +23,16 @@
     <textarea id="msgsArea" cols="50" rows="30" hidden></textarea>
 </body>
 <script>
+    //Diffie-Hellman key exchange
+    let n = 7;
+    let g = 101;
+
+    let x = Math.floor(Math.random() * 5) //random big number
+    let gxmodn = Math.pow(g, x) % n;
+
+    let gymodn = 0;
+    let key = 0;
+
     let ws;
     const loginForm = document.querySelector("#loginForm");
     const sendForm = document.querySelector("#sendForm");
@@ -38,15 +48,44 @@
         sendForm.hidden = false;
         msgsArea.hidden = false;
         msgInput.focus();
-        ws = new WebSocket("ws://127.0.0.1:3000/ws/" + nameInput.value + "/" + toInput.value);
+        ws = new WebSocket("ws://127.0.0.1:3000/ws/" + nameInput.value + "/" + toInput.value + "/" + n + "/" + g + "/" + gxmodn);
         ws.onmessage = function (event) {
-            msgsArea.value += event.data + "\r\n";
+            msg = JSON.parse(event.data);
+            if (msg["Setup"] != null) {
+                n = msg["Setup"]["n"];
+                g = msg["Setup"]["g"];
+                gymodn = msg["Setup"]["gymodn"];
+                //create key
+                key = Math.pow(gymodn, x) % n;
+                //send response
+                ws.send(JSON.stringify({ "WSSetupResponse": { "gxmodn": gxmodn } }));
+            } else if (msg["WSSetupResponse"] != null) {
+                //create key
+                key = Math.pow(msg["WSSetupResponse"]["gxmodn"], x) % n;
+            } else if (msg["Message"] != null) {
+                //decrypt message
+                let msgText = msg["Message"]["text"];
+                let msgKey = key.toString();
+                let msgTextDecrypted = "";
+                for (let i = 0; i < msgText.length; i++) {
+                    msgTextDecrypted += String.fromCharCode(msgText.charCodeAt(i) ^ msgKey.charCodeAt(i % msgKey.length));
+                }
+                msgsArea.value += msgTextDecrypted + "\r\n";
+            }
         }
     });
 
     sendForm.addEventListener("submit", function (event) {
         event.preventDefault();
-        ws.send(msgInput.value);
+        //encrypt message
+        let msgText = msgInput.value;
+        let msgKey = key.toString();
+        let msgTextEncrypted = "";
+        for (let i = 0; i < msgText.length; i++) {
+            msgTextEncrypted += String.fromCharCode(msgText.charCodeAt(i) ^ msgKey.charCodeAt(i % msgKey.length));
+        }
+        //send message
+        ws.send(JSON.stringify({ "Message": { "text": msgTextEncrypted } }));
         msgInput.value = "";
     });
 </script>

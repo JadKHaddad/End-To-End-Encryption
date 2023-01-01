@@ -13,15 +13,45 @@ use poem::{
     EndpointExt, IntoResponse, Route, Server,
 };
 
+struct Client {
+    sender: tokio::sync::mpsc::UnboundedSender<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+enum WebsocketMessage {
+    Message(WSMessage),
+    Setup(WSSetup),
+    SetupResponse(WSSetupResponse),
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct WSMessage {
+    text: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct WSSetup {
+    n: i32,
+    g: i32,
+    gymodn: i32,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct WSSetupResponse {
+    gxmodn: i32,
+}
+
 #[handler]
 fn ws(
-    Path((from, to)): Path<(String, String)>,
+    Path((from, to, n, g, gymodn)): Path<(String, String, i32, i32, i32)>,
     ws: WebSocket,
-    clients: Data<&Arc<RwLock<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>>,
+    clients: Data<&Arc<RwLock<HashMap<String, Client>>>>,
 ) -> impl IntoResponse {
     //This is done the easy way. Don't do this in production.
     //Use some channels and options instead of locking the whole hashmap.
-    
+
+    println!("{} -> {}: {} {} {}", from, to, n, g, gymodn);
+
     let clients = clients.clone();
     let clients_recv = clients.clone();
     let from_recv = from.clone();
@@ -30,7 +60,15 @@ fn ws(
 
     {
         let mut clients_g = clients.write();
-        clients_g.insert(from.clone(), sender);
+        clients_g.insert(from.clone(), Client { sender });
+    }
+
+    //if the buddy is online, send him the setup message
+    if let Some(buddy_sender) = clients.read().get(&to) {
+        let msg = WebsocketMessage::Setup(WSSetup { n, g, gymodn });
+        let _ = buddy_sender
+            .sender
+            .send(serde_json::to_string(&msg).unwrap());
     }
 
     ws.on_upgrade(move |socket| async move {
@@ -41,7 +79,7 @@ fn ws(
                 if let Message::Text(text) = msg {
                     println!("{} -> {}: {}", from, to, text);
                     if let Some(buddy_sender) = clients.read().get(&to) {
-                        if buddy_sender.send(text).is_err() {
+                        if buddy_sender.sender.send(text).is_err() {
                             break;
                         }
                     }
@@ -68,10 +106,9 @@ async fn main() -> Result<(), std::io::Error> {
     }
     tracing_subscriber::fmt::init();
 
-    let clients: Arc<RwLock<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let clients: Arc<RwLock<HashMap<String, Client>>> = Arc::new(RwLock::new(HashMap::new()));
     let app = Route::new()
-        .at("/ws/:from/:to", get(ws.data(clients)))
+        .at("/ws/:from/:to/:n/:g/:gxmodn", get(ws.data(clients)))
         .nest(
             "/",
             StaticFilesEndpoint::new(std::path::Path::new(".").join("html"))
